@@ -58,13 +58,11 @@ jobs:
             qemu-img create -f qcow2 win10.qcow2 128G
           fi
 
-      - name: Download Windows 10 Custom ROM Google Drive (Chỉ tải nếu chưa cài)
+      - name: Download Windows 10 Custom ROM Local Server (Chỉ tải nếu chưa cài)
         run: |
           if [ ! -f "win10_installed.flag" ]; then
-            echo "Đang tải ROM xịn từ Google Drive..."
-            curl -c ./cookie -s -L "https://drive.google.com/uc?export=download&id=1sL3Gu2kfXHGyA1W8ujm69JiILOU4HxN4" > /dev/null
-            curl -Lb ./cookie "https://drive.google.com/uc?export=download&confirm=`cat ./cookie | grep -o 'download_warning.*' | cut -f2`0&id=1sL3Gu2kfXHGyA1W8ujm69JiILOU4HxN4" -o win10.iso
-            rm -f ./cookie
+            echo "Đang tải ROM xịn từ Server nội bộ..."
+            wget -O win10.iso "http://192.168.53.177:8080/win10lite.iso"
           fi
 
       - name: Launch QEMU Windows 10 with SPICE and Intel HDA Audio (Port 5902)
