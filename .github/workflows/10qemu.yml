@@ -30,11 +30,12 @@ jobs:
           sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils ovmf wget curl spice-vdagent libspice-server-dev
           curl -fsSL https://tailscale.com/install.sh | sh
 
-      - name: Setup Tailscale
+      - name: Setup Tailscale First (Bật Tailscale trước để kết nối IP 100.x.x.x)
         env:
           TAILSCALE_AUTHKEY: ${{ github.event.inputs.tailscale_authkey }}
         run: |
           sudo tailscale up --authkey=$TAILSCALE_AUTHKEY --hostname=github-ubuntu-qemu --accept-routes || true
+          sleep 5
 
       - name: Launch Ubuntu Desktop SPICE Server (:0 - Port 5900)
         run: |
@@ -58,11 +59,11 @@ jobs:
             qemu-img create -f qcow2 win10.qcow2 128G
           fi
 
-      - name: Download Windows 10 Custom ROM Local Server (Chỉ tải nếu chưa cài)
+      - name: Download Windows 10 Custom ROM Local Server (Tải ISO qua IP Tailscale)
         run: |
           if [ ! -f "win10_installed.flag" ]; then
-            echo "Đang tải ROM xịn từ Server nội bộ..."
-            wget -O win10.iso "http://192.168.53.177:8080/win10lite.iso"
+            echo "Đang tải ROM xịn từ Server nội bộ qua Tailscale..."
+            wget -O win10.iso "http://100.92.25.60:8080/win10lite.iso"
           fi
 
       - name: Launch QEMU Windows 10 with SPICE and Intel HDA Audio (Port 5902)
