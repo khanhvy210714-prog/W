@@ -60,7 +60,7 @@ jobs:
             wget -O win10.iso "https://archive.org/download/tiny-10-23-h2/tiny10%20x64%2023h2.iso"
           fi
 
-      - name: Launch QEMU Windows 10 with SPICE and Intel HDA Audio (Port 5902)
+      - name: Launch QEMU Windows 10 with QXL & SPICE Compression
         run: |
           CDROM_ARG=""
           BOOT_ARG=""
@@ -77,16 +77,18 @@ jobs:
           OVMF_PATH=$(ls /usr/share/OVMF/OVMF_CODE*.fd /usr/share/ovmf/OVMF*.fd 2>/dev/null | head -n 1)
 
           sudo qemu-system-x86_64 \
-            -enable-kvm -cpu max -smp 4 -m 8192 -vga virtio $BOOT_ARG \
+            -enable-kvm -cpu host,kvm=off -smp 4 -m 8192 $BOOT_ARG \
             -drive if=pflash,format=raw,readonly=on,file=$OVMF_PATH \
+            -vga qxl -global qxl-vga.vram_size=134217728 \
             -device ahci,id=ahci0 \
-            -drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=unsafe,aio=threads,l2-cache-size=512M,detect-zeroes=on -device ide-hd,bus=ahci0.0,drive=hda0,rotation_rate=1 \
+            -drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=unsafe,cache.direct=on,l2-cache-size=512M,throttling.bps-total=536870912,aio=threads,detect-zeroes=on \
+            -device ide-hd,bus=ahci0.0,drive=hda0,rotation_rate=1 \
             $CDROM_ARG \
-            -device qemu-xhci,id=xhci -device usb-tablet,bus=xhci.0 \
+            -device usb-ehci,id=usb -device usb-tablet,bus=usb.0 \
             -net nic,model=e1000 -net user,hostfwd=tcp::3389-:3389 \
-            -audiodev sdl,id=snd0 \
-            -device intel-hda -device hda-duplex,audiodev=snd0 \
-            -spice port=5902,addr=0.0.0.0,disable-ticketing=true > /dev/null 2>&1 &
+            -audiodev spice,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
+            -display none \
+            -spice port=5902,addr=0.0.0.0,disable-ticketing=true,image-compression=glz,jpeg-wan-compression=always,zlib-glz-wan-compression=always,streaming-video=filter,playback-compression=on > /dev/null 2>&1 &
           sleep 3
 
       - name: Show Connection Info
