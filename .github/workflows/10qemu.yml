@@ -15,9 +15,14 @@ concurrency:
 jobs:
   run-win10:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Desktop, QEMU, OVMF, SPICE Server & Tailscale
         run: |
@@ -53,14 +58,16 @@ jobs:
             qemu-img create -f qcow2 win10.qcow2 128G
           fi
 
-      - name: Download Windows 10 ISO (Chỉ tải nếu chưa cài)
+      - name: Download Windows 10 Custom ROM Google Drive (Chỉ tải nếu chưa cài)
         run: |
           if [ ! -f "win10_installed.flag" ]; then
-            echo "Đang tải ISO Tiny10 từ Archive.org..."
-            wget -O win10.iso "https://archive.org/download/tiny-10-23-h2/tiny10%20x64%2023h2.iso"
+            echo "Đang tải ROM xịn từ Google Drive..."
+            curl -c ./cookie -s -L "https://drive.google.com/uc?export=download&id=1sL3Gu2kfXHGyA1W8ujm69JiILOU4HxN4" > /dev/null
+            curl -Lb ./cookie "https://drive.google.com/uc?export=download&confirm=`cat ./cookie | grep -o 'download_warning.*' | cut -f2`0&id=1sL3Gu2kfXHGyA1W8ujm69JiILOU4HxN4" -o win10.iso
+            rm -f ./cookie
           fi
 
-      - name: Launch QEMU Windows 10 with QXL & SPICE Compression
+      - name: Launch QEMU Windows 10 with SPICE and Intel HDA Audio (Port 5902)
         run: |
           CDROM_ARG=""
           BOOT_ARG=""
@@ -77,12 +84,10 @@ jobs:
           OVMF_PATH=$(ls /usr/share/OVMF/OVMF_CODE*.fd /usr/share/ovmf/OVMF*.fd 2>/dev/null | head -n 1)
 
           sudo qemu-system-x86_64 \
-            -enable-kvm -cpu host,kvm=off -smp 4 -m 8192 $BOOT_ARG \
+            -enable-kvm -cpu host,kvm=off -smp 4 -m 8192 -vga qxl -global qxl-vga.vram_size=134217728 $BOOT_ARG \
             -drive if=pflash,format=raw,readonly=on,file=$OVMF_PATH \
-            -vga qxl -global qxl-vga.vram_size=134217728 \
             -device ahci,id=ahci0 \
-            -drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=unsafe,cache.direct=on,l2-cache-size=512M,throttling.bps-total=536870912,aio=threads,detect-zeroes=on \
-            -device ide-hd,bus=ahci0.0,drive=hda0,rotation_rate=1 \
+            -drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=unsafe,cache.direct=on,l2-cache-size=512M,throttling.bps-total=536870912,aio=threads,detect-zeroes=on -device ide-hd,bus=ahci0.0,drive=hda0,rotation_rate=1 \
             $CDROM_ARG \
             -device usb-ehci,id=usb -device usb-tablet,bus=usb.0 \
             -net nic,model=e1000 -net user,hostfwd=tcp::3389-:3389 \
