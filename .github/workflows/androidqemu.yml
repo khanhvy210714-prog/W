@@ -61,7 +61,7 @@ jobs:
       - name: Install QEMU, SPICE, VNC, Virgl & Tailscale
         run: |
           sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils wget curl spice-vdagent libspice-server-dev virglrenderer-utils
+          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils wget curl spice-vdagent libspice-server-dev libvirglrenderer1
           curl -fsSL https://tailscale.com/install.sh | sh
 
       - name: Setup Tailscale
@@ -134,19 +134,17 @@ jobs:
             BOOT_ARG="-boot order=c"
           fi
 
-          # 3. Cấu hình VGA & Virgl GPU Acceleration (256MB VRAM)
+          # 3. Cấu hình VGA (256MB VRAM)
           if [ "$VGA_CHOICE" = "qxl" ]; then
             VGA_ARG="-vga qxl -global qxl-vga.vram_size=268435456 -global qxl-vga.ram_size=268435456"
           else
-            # Mặc định virtio với virgl3d (3D OpenGL Hardware Acceleration)
-            VGA_ARG="-device virtio-vga-gl,virgl=on -display egraphene,gl=on -global virtio-vga.max_hostmem=268435456"
+            VGA_ARG="-device virtio-vga-gl -global virtio-vga.max_hostmem=268435456"
           fi
 
           # 4. Cấu hình Audio
           if [ "$AUDIO_CHOICE" = "hda" ]; then
             AUDIO_ARG="-audiodev spice,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0"
           else
-            # Mặc định AC97
             AUDIO_ARG="-audiodev spice,id=snd0 -device ac97,audiodev=snd0"
           fi
 
@@ -159,7 +157,6 @@ jobs:
             x11vnc -display :0 -forever -shared -rfbport 5900 -nopw > /dev/null 2>&1 &
             DISPLAY_ARG="-display x11"
           else
-            # Mặc định SPICE Port 5902
             DISPLAY_ARG="-spice port=5902,addr=0.0.0.0,disable-ticketing=true,image-compression=glz,jpeg-wan-compression=always,zlib-glz-wan-compression=always,streaming-video=filter,playback-compression=on"
           fi
 
