@@ -34,7 +34,7 @@ on:
           - 'virtio'
           - 'qxl'
       audio_type:
-        description: 'Chọn loại Âm thanh (Chỉ áp dụng cho SPICE): ac97 (B - mặc định) hoặc hda (A)'
+        description: 'Chọn loại Âm thanh: ac97 (B - mặc định) hoặc hda (A)'
         required: true
         default: 'ac97'
         type: choice
@@ -61,7 +61,7 @@ jobs:
       - name: Install QEMU, SPICE, VNC & Tailscale
         run: |
           sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils wget curl spice-vdagent libspice-server-dev libvirglrenderer1
+          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils wget curl spice-vdagent libspice-server-dev
           curl -fsSL https://tailscale.com/install.sh | sh
 
       - name: Setup Tailscale
@@ -134,76 +134,59 @@ jobs:
             BOOT_ARG="-boot order=c"
           fi
 
-          # 3. Cấu hình Card Màn Hình (VRAM 256MB)
+          # 3. Cấu hình VGA (256MB VRAM)
           if [ "$VGA_CHOICE" = "qxl" ]; then
             VGA_ARG="-vga qxl -global qxl-vga.vram_size=268435456 -global qxl-vga.ram_size=268435456"
           else
-            VGA_ARG="-device virtio-vga -global virtio-vga.max_hostmem=268435456"
+            VGA_ARG="-device virtio-vga,max_hostmem=268435456"
           fi
 
-          # 4. Khởi chạy VNC Desktop Ubuntu (Luôn mở trên cổng 5900)
-          Xvfb :0 -screen 0 1280x720x24 > /tmp/xvfb.log 2>&1 &
-          sleep 2
-          DISPLAY=:0 startxfce4 > /tmp/xfce.log 2>&1 &
-          sleep 2
-          x11vnc -display :0 -forever -shared -rfbport 5900 -nopw > /tmp/x11vnc.log 2>&1 &
-
-          # 5. Cấu hình Display & Audio tùy thuộc vào màn hình chọn (VNC hoặc SPICE)
-          if [ "$DISPLAY_CHOICE" = "vnc" ]; then
-            # Chọn VNC Android -> Tắt audio (VNC không hỗ trợ driver audio)
-            AUDIO_ARG=""
-            DISPLAY_ARG="-vnc :1" # Mở VNC Android ở cổng 5901
+          # 4. Cấu hình Audio
+          if [ "$AUDIO_CHOICE" = "hda" ]; then
+            AUDIO_ARG="-audiodev spice,id=spice-audio -device ich9-intel-hda -device hda-duplex,audiodev=spice-audio"
           else
-            # Chọn SPICE Android -> Bật âm thanh theo cấu hình
-            if [ "$AUDIO_CHOICE" = "hda" ]; then
-              AUDIO_ARG="-audiodev spice,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0"
-            else
-              AUDIO_ARG="-audiodev spice,id=snd0 -device ac97,audiodev=snd0"
-            fi
-            DISPLAY_ARG="-spice port=5902,addr=0.0.0.0,disable-ticketing=true,image-compression=glz,jpeg-wan-compression=always,zlib-glz-wan-compression=always,streaming-video=filter,playback-compression=on"
+            AUDIO_ARG="-audiodev spice,id=spice-audio -device ac97,audiodev=spice-audio"
           fi
 
-          # 6. Chạy QEMU BIOS (Ghi log trực tiếp ra qemu.log để kiểm tra lỗi)
+          # 5. Cấu hình Display Output (SPICE / VNC)
+          if [ "$DISPLAY_CHOICE" = "vnc" ]; then
+            Xvfb :0 -screen 0 1280x720x24 > /dev/null 2>&1 &
+            sleep 2
+            DISPLAY=:0 startxfce4 > /dev/null 2>&1 &
+            sleep 2
+            x11vnc -display :0 -forever -shared -rfbport 5900 -nopw > /dev/null 2>&1 &
+            DISPLAY_ARG="-display x11"
+          else
+            DISPLAY_ARG="-spice port=5902,addr=0.0.0.0,disable-ticketing=on,image-compression=glz,jpeg-wan-compression=always,zlib-glz-wan-compression=always,playback-compression=off"
+          fi
+
+          # 6. Chạy QEMU BIOS với KVM, CPU Max, Virtio Disk & e1000 Net
           sudo qemu-system-x86_64 \
             -enable-kvm \
             -machine q35,hpet=off,accel=kvm \
-            -cpu host,migratable=off,lm=on,kvm=off \
+            -cpu max \
             -smp 4,sockets=1,cores=4,threads=1 \
             -m $RAM_MB \
             $VGA_ARG \
             $BOOT_ARG \
             -device ahci,id=ahci0 \
-            -drive file=android.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,cache.direct=off,l2-cache-size=768M,throttling.bps-total=805306368,aio=threads,detect-zeroes=on \
-            -device ide-hd,bus=ahci0.0,drive=hda0,rotation_rate=1 \
+            -drive file=android.qcow2,format=qcow2,if=virtio,id=hda0,discard=unmap,cache=writeback,cache.direct=off,l2-cache-size=768M,throttling.bps-total=805306368,aio=threads,detect-zeroes=on \
             $CDROM_ARG \
             -device usb-ehci,id=usb -device usb-tablet,bus=usb.0 \
-            -net nic,model=virtio -net user,hostfwd=tcp::5555-:5555 \
+            -net nic,model=e1000 -net user,hostfwd=tcp::5555-:5555 \
             $AUDIO_ARG \
-            $DISPLAY_ARG > qemu.log 2>&1 &
-          
+            $DISPLAY_ARG > /dev/null 2>&1 &
           sleep 5
-          echo "--- LOG QEMU BAN ĐẦU ---"
-          cat qemu.log || true
 
       - name: Show Connection Info
         run: |
           sleep 5
           tailscale_ip=$(tailscale ip -4 || echo "Chưa kết nối Tailscale")
-          AUDIO_STATUS="${{ github.event.inputs.audio_type }}"
-          if [ "${{ github.event.inputs.display_type }}" = "vnc" ]; then
-            AUDIO_STATUS="Không hỗ trợ (Đang dùng VNC)"
-          fi
-
           echo "=========================================="
           echo "IP TAILSCALE UBUNTU HOST: $tailscale_ip"
-          echo "1. VNC UBUNTU DESKTOP:          $tailscale_ip:5900"
-          if [ "${{ github.event.inputs.display_type }}" = "vnc" ]; then
-            echo "2. VNC ANDROID (Đã chọn):       $tailscale_ip:5901"
-          else
-            echo "2. SPICE ANDROID (Đã chọn):     $tailscale_ip:5902"
-          fi
-          echo "3. ÂM THANH STATUS:             $AUDIO_STATUS"
-          echo "4. ADB ANDROID CONNECT:         $tailscale_ip:5555"
+          echo "1. VNC DESKTOP (Nếu chọn VNC):  $tailscale_ip:5900"
+          echo "2. SPICE ANDROID (Nếu chọn SPICE): $tailscale_ip:5902"
+          echo "3. ADB ANDROID CONNECT:          $tailscale_ip:5555"
           echo "=========================================="
 
       - name: Keep Alive (4 Hours)
@@ -213,15 +196,19 @@ jobs:
       - name: Backup Disk Before Runner Expires
         if: always()
         run: |
+          # Tăng cấu hình buffer Git lên 2GB và thiết lập timeout chống đứt kết nối
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git config --global http.postBuffer 1073741824
-          git config --global pack.windowMemory "256m"
-          git config --global pack.packSizeLimit "256m"
+          git config --global http.postBuffer 2147483648
+          git config --global http.lowSpeedLimit 1000
+          git config --global http.lowSpeedTime 300
+          git config --global pack.windowMemory "512m"
+          git config --global pack.packSizeLimit "512m"
 
           sudo pkill -f qemu-system-x86_64 || true
           sleep 5
 
+          # Dọn dẹp file cũ
           git rm -f android_disk.tar.gz.part* || true
           rm -f android_disk.tar.gz*
 
@@ -230,9 +217,9 @@ jobs:
             qemu-img convert -c -O qcow2 android.qcow2 android_compressed.qcow2
             mv android_compressed.qcow2 android.qcow2
 
-            echo "2. Đóng gói và cắt nhỏ file backup 40MB..."
+            echo "2. Đóng gói và cắt nhỏ file backup thành các mảnh 90MB..."
             tar -czf android_disk.tar.gz android.qcow2
-            split -b 40M android_disk.tar.gz android_disk.tar.gz.part
+            split -b 90M android_disk.tar.gz android_disk.tar.gz.part
             rm -f android_disk.tar.gz
           fi
 
@@ -243,6 +230,6 @@ jobs:
           
           echo "3. Đẩy dữ liệu backup lên GitHub..."
           for i in {1..5}; do
-            git push origin main && break || echo "Lần push thứ $i thất bại, đang thử lại..."
-            sleep 10
+            git push --force origin main && echo "Push thành công!" && break || echo "Lần push thứ $i thất bại, đang thử lại sau 15 giây..."
+            sleep 15
           done
