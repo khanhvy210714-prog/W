@@ -34,7 +34,7 @@ on:
           - 'virtio'
           - 'qxl'
       audio_type:
-        description: 'Chọn loại Âm thanh: ac97 (B - mặc định) hoặc hda (A)'
+        description: 'Chọn loại Âm thanh (Chỉ áp dụng cho SPICE): ac97 (B - mặc định) hoặc hda (A)'
         required: true
         default: 'ac97'
         type: choice
@@ -58,7 +58,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install QEMU, SPICE, VNC, Virgl & Tailscale
+      - name: Install QEMU, SPICE, VNC & Tailscale
         run: |
           sudo apt-get update
           sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils wget curl spice-vdagent libspice-server-dev libvirglrenderer1
@@ -134,33 +134,36 @@ jobs:
             BOOT_ARG="-boot order=c"
           fi
 
-          # 3. Cấu hình VGA (256MB VRAM)
+          # 3. Cấu hình Card Màn Hình (VRAM 256MB)
           if [ "$VGA_CHOICE" = "qxl" ]; then
             VGA_ARG="-vga qxl -global qxl-vga.vram_size=268435456 -global qxl-vga.ram_size=268435456"
           else
-            VGA_ARG="-device virtio-vga-gl -global virtio-vga.max_hostmem=268435456"
+            VGA_ARG="-device virtio-vga -global virtio-vga.max_hostmem=268435456"
           fi
 
-          # 4. Cấu hình Audio
-          if [ "$AUDIO_CHOICE" = "hda" ]; then
-            AUDIO_ARG="-audiodev spice,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0"
-          else
-            AUDIO_ARG="-audiodev spice,id=snd0 -device ac97,audiodev=snd0"
-          fi
+          # 4. Khởi chạy VNC Desktop Ubuntu (Luôn mở trên cổng 5900)
+          Xvfb :0 -screen 0 1280x720x24 > /tmp/xvfb.log 2>&1 &
+          sleep 2
+          DISPLAY=:0 startxfce4 > /tmp/xfce.log 2>&1 &
+          sleep 2
+          x11vnc -display :0 -forever -shared -rfbport 5900 -nopw > /tmp/x11vnc.log 2>&1 &
 
-          # 5. Cấu hình Display Output (SPICE / VNC)
+          # 5. Cấu hình Display & Audio tùy thuộc vào màn hình chọn (VNC hoặc SPICE)
           if [ "$DISPLAY_CHOICE" = "vnc" ]; then
-            Xvfb :0 -screen 0 1280x720x24 > /dev/null 2>&1 &
-            sleep 2
-            DISPLAY=:0 startxfce4 > /dev/null 2>&1 &
-            sleep 2
-            x11vnc -display :0 -forever -shared -rfbport 5900 -nopw > /dev/null 2>&1 &
-            DISPLAY_ARG="-display x11"
+            # Chọn VNC Android -> Tắt audio (VNC không hỗ trợ driver audio)
+            AUDIO_ARG=""
+            DISPLAY_ARG="-vnc :1" # Mở VNC Android ở cổng 5901
           else
+            # Chọn SPICE Android -> Bật âm thanh theo cấu hình
+            if [ "$AUDIO_CHOICE" = "hda" ]; then
+              AUDIO_ARG="-audiodev spice,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0"
+            else
+              AUDIO_ARG="-audiodev spice,id=snd0 -device ac97,audiodev=snd0"
+            fi
             DISPLAY_ARG="-spice port=5902,addr=0.0.0.0,disable-ticketing=true,image-compression=glz,jpeg-wan-compression=always,zlib-glz-wan-compression=always,streaming-video=filter,playback-compression=on"
           fi
 
-          # 6. Chạy QEMU BIOS với KVM, CPU Max, SSD Mode, Đĩa 768MB/s & L2 Cache 768M
+          # 6. Chạy QEMU BIOS (Ghi log trực tiếp ra qemu.log để kiểm tra lỗi)
           sudo qemu-system-x86_64 \
             -enable-kvm \
             -machine q35,hpet=off,accel=kvm \
@@ -176,18 +179,31 @@ jobs:
             -device usb-ehci,id=usb -device usb-tablet,bus=usb.0 \
             -net nic,model=virtio -net user,hostfwd=tcp::5555-:5555 \
             $AUDIO_ARG \
-            $DISPLAY_ARG > /dev/null 2>&1 &
+            $DISPLAY_ARG > qemu.log 2>&1 &
+          
           sleep 5
+          echo "--- LOG QEMU BAN ĐẦU ---"
+          cat qemu.log || true
 
       - name: Show Connection Info
         run: |
           sleep 5
           tailscale_ip=$(tailscale ip -4 || echo "Chưa kết nối Tailscale")
+          AUDIO_STATUS="${{ github.event.inputs.audio_type }}"
+          if [ "${{ github.event.inputs.display_type }}" = "vnc" ]; then
+            AUDIO_STATUS="Không hỗ trợ (Đang dùng VNC)"
+          fi
+
           echo "=========================================="
           echo "IP TAILSCALE UBUNTU HOST: $tailscale_ip"
-          echo "1. VNC DESKTOP (Nếu chọn VNC):  $tailscale_ip:5900"
-          echo "2. SPICE ANDROID (Nếu chọn SPICE): $tailscale_ip:5902"
-          echo "3. ADB ANDROID CONNECT:          $tailscale_ip:5555"
+          echo "1. VNC UBUNTU DESKTOP:          $tailscale_ip:5900"
+          if [ "${{ github.event.inputs.display_type }}" = "vnc" ]; then
+            echo "2. VNC ANDROID (Đã chọn):       $tailscale_ip:5901"
+          else
+            echo "2. SPICE ANDROID (Đã chọn):     $tailscale_ip:5902"
+          fi
+          echo "3. ÂM THANH STATUS:             $AUDIO_STATUS"
+          echo "4. ADB ANDROID CONNECT:         $tailscale_ip:5555"
           echo "=========================================="
 
       - name: Keep Alive (4 Hours)
