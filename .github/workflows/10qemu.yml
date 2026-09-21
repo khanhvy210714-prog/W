@@ -1,4 +1,4 @@
-Name: Windows 10 22H2 QEMU UEFI on Ubuntu
+name: Windows 10 22H2 QEMU UEFI on Ubuntu
 
 on:
   workflow_dispatch:
@@ -145,7 +145,6 @@ jobs:
       - name: Backup Disk Before Runner Expires
         if: always()
         run: |
-          # 1. Cấu hình Git chịu tải HTTP 2GB & chống timeout
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git config --global http.postBuffer 2147483648
@@ -157,7 +156,6 @@ jobs:
           sudo pkill -f qemu-system-x86_64 || true
           sleep 5
 
-          # Xóa toàn bộ file part cũ trong Repo để tránh rác
           git rm -f win10_disk.tar.gz.part* || true
           rm -f win10_disk.tar.gz*
 
