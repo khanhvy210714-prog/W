@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tailscale_authkey:
-        description: 'Nhập Tailscale Authkey của ní vào đây'
+        description: 'Nhập Tailscale Authkey'
         required: true
         default: ''
       iso_type:
@@ -17,6 +17,16 @@ on:
           - 'medlite'
           - 'superlite'
           - 'tiny10'
+      disk_type:
+        description: 'Chọn chuẩn ổ đĩa (ahci / scsi / megasas / ide)'
+        required: true
+        default: 'ahci'
+        type: choice
+        options:
+          - 'ahci'
+          - 'scsi'
+          - 'megasas'
+          - 'ide'
 
 concurrency:
   group: win10-qemu-runner
@@ -34,10 +44,11 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Desktop, QEMU, OVMF, SPICE Server & Tailscale
+      - name: Install Dependencies & Setup Git LFS
         run: |
           sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils ovmf wget curl spice-vdagent libspice-server-dev
+          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils ovmf wget curl spice-vdagent libspice-server-dev git-lfs
+          git lfs install
           curl -fsSL https://tailscale.com/install.sh | sh
 
       - name: Download Selected Windows 10 Custom ROM
@@ -46,7 +57,6 @@ jobs:
         run: |
           if [ ! -f "win10_installed.flag" ]; then
             CHOICE=$(echo "$ISO_CHOICE" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-            
             case "$CHOICE" in
               "medlite" | "mediumlite")
                 ISO_URL="https://stranger-apparatus-mic-town.trycloudflare.com/win10medlite.iso"
@@ -61,8 +71,7 @@ jobs:
                 ISO_URL="https://stranger-apparatus-mic-town.trycloudflare.com/win10lite.iso"
                 ;;
             esac
-
-            echo "Đang tải ISO được chọn trước khi bật Tailscale: $ISO_URL"
+            echo "Đang tải ISO: $ISO_URL"
             wget -O win10.iso "$ISO_URL"
           fi
 
@@ -90,25 +99,45 @@ jobs:
             touch win10_installed.flag
             rm -f win10_disk.tar.gz
           else
-            echo "Chưa có backup, khởi tạo đĩa QCOW2 128GB mới..."
+            echo "Khởi tạo đĩa QCOW2 128GB mới..."
             qemu-img create -f qcow2 win10.qcow2 128G
           fi
 
-      - name: Launch QEMU Windows 10 Max Performance (Port 5902)
+      - name: Launch QEMU Windows 10
+        env:
+          DISK_CHOICE: ${{ github.event.inputs.disk_type }}
         run: |
           CDROM_ARG=""
           BOOT_ARG=""
 
           if [ ! -f "win10_installed.flag" ] && [ -f "win10.iso" ]; then
-            echo "Chưa có flag: Ép Boot từ ISO..."
-            CDROM_ARG="-drive file=win10.iso,media=cdrom,if=none,id=cdrom0,cache=writeback,aio=threads,throttling.bps-total=805306368 -device ide-cd,bus=ahci0.1,drive=cdrom0"
+            CDROM_ARG="-drive file=win10.iso,media=cdrom,if=none,id=cdrom0,cache=writeback,aio=threads -device ide-cd,bus=ahci0.1,drive=cdrom0"
             BOOT_ARG="-boot order=d,menu=on"
           else
-            echo "Đã cài xong: Boot từ đĩa cứng..."
             BOOT_ARG="-boot order=c"
           fi
 
           OVMF_PATH=$(ls /usr/share/OVMF/OVMF_CODE*.fd /usr/share/ovmf/OVMF*.fd 2>/dev/null | head -n 1)
+
+          # Cấu hình chuẩn đĩa theo lựa chọn
+          case "$DISK_CHOICE" in
+            "scsi")
+              DRIVE_CTRL="-device lsi53c1030,id=scsi0"
+              DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,aio=threads -device scsi-hd,bus=scsi0.0,drive=hda0"
+              ;;
+            "megasas")
+              DRIVE_CTRL="-device megasas,id=scsi0"
+              DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,aio=threads -device scsi-hd,bus=scsi0.0,drive=hda0"
+              ;;
+            "ide")
+              DRIVE_CTRL=""
+              DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=ide,index=0,media=disk,cache=writeback,aio=threads"
+              ;;
+            *)
+              DRIVE_CTRL="-device ahci,id=ahci0"
+              DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,cache.direct=off,l2-cache-size=768M,throttling.bps-total=805306368,aio=threads,detect-zeroes=on -device ide-hd,bus=ahci0.0,drive=hda0,rotation_rate=1"
+              ;;
+          esac
 
           sudo qemu-system-x86_64 \
             -enable-kvm \
@@ -117,14 +146,14 @@ jobs:
             -smp 4,sockets=1,cores=4,threads=1 -m 8192 \
             -vga qxl -global qxl-vga.vram_size=134217728 $BOOT_ARG \
             -drive if=pflash,format=raw,readonly=on,file=$OVMF_PATH \
-            -device ahci,id=ahci0 \
-            -drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,cache.direct=off,l2-cache-size=768M,throttling.bps-total=805306368,aio=threads,detect-zeroes=on -device ide-hd,bus=ahci0.0,drive=hda0,rotation_rate=1 \
+            $DRIVE_CTRL \
+            $DRIVE_DEV \
             $CDROM_ARG \
             -device usb-ehci,id=usb -device usb-tablet,bus=usb.0 \
             -net nic,model=e1000 -net user,hostfwd=tcp::3389-:3389 \
             -audiodev spice,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
             -display none \
-            -spice port=5902,addr=0.0.0.0,disable-ticketing=true,image-compression=glz,jpeg-wan-compression=always,zlib-glz-wan-compression=always,streaming-video=filter,playback-compression=on > /dev/null 2>&1 &
+            -spice port=5902,addr=0.0.0.0,disable-ticketing=true,image-compression=glz,jpeg-wan-compression=always,zlib-glz-wan-compression=always,streaming-video=filter,playback-compression=on &
           sleep 3
 
       - name: Show Connection Info
@@ -145,16 +174,15 @@ jobs:
       - name: Backup Disk Before Runner Expires
         if: always()
         run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
-          git config --global http.postBuffer 2147483648
-          git config --global http.lowSpeedLimit 1000
-          git config --global http.lowSpeedTime 300
-          git config --global pack.windowMemory "512m"
-          git config --global pack.packSizeLimit "512m"
-
           sudo pkill -f qemu-system-x86_64 || true
           sleep 5
+
+          # Cấu hình Git chống đứt nét HTTP 500
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git config --global http.version HTTP/1.1
+          git config --global http.postBuffer 524288000
+          git config --global core.compression 9
 
           git rm -f win10_disk.tar.gz.part* || true
           rm -f win10_disk.tar.gz*
@@ -164,19 +192,22 @@ jobs:
             qemu-img convert -c -O qcow2 win10.qcow2 win10_compressed.qcow2
             mv win10_compressed.qcow2 win10.qcow2
 
-            echo "2. Đang đóng gói tar.gz và cắt nhỏ 90MB..."
+            echo "2. Đóng gói và chia nhỏ mảnh 40MB..."
             tar -czf win10_disk.tar.gz win10.qcow2
-            split -b 90M win10_disk.tar.gz win10_disk.tar.gz.part
+            split -b 40M win10_disk.tar.gz win10_disk.tar.gz.part
             rm -f win10_disk.tar.gz
           fi
 
           touch win10_installed.flag
 
-          git add win10_disk.tar.gz.part* win10_installed.flag || true
-          git commit -m "Auto backup Win10 QEMU Compressed Disk [skip ci]" || true
-          
-          echo "3. Đang đẩy dữ liệu lên GitHub..."
-          for i in {1..5}; do
-            git push --force origin main && echo "Push thành công!" && break || echo "Lần push thứ $i thất bại, đang thử lại..."
-            sleep 15
+          # Commit và Push từng mảnh một để tránh lỗi 500
+          git add win10_installed.flag
+          for file in win10_disk.tar.gz.part*; do
+            if [ -f "$file" ]; then
+              git add "$file"
+              git commit -m "Backup part $file [skip ci]" || true
+              for i in {1..5}; do
+                git push origin main && echo "Push thành công $file" && break || sleep 10
+              done
+            fi
           done
