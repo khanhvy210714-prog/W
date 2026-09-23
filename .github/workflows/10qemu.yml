@@ -8,7 +8,7 @@ on:
         required: true
         default: ''
       iso_type:
-        description: 'Chọn phiên bản ISO (lite / medlite / superlite / tiny10 / tiny10v2)'
+        description: 'Chọn phiên bản ISO (lite / medlite / superlite / tiny10 / tiny10v2 / tiny10v3)'
         required: true
         default: 'lite'
         type: choice
@@ -18,6 +18,7 @@ on:
           - 'superlite'
           - 'tiny10'
           - 'tiny10v2'
+          - 'tiny10v3'
       disk_type:
         description: 'Chọn chuẩn ổ đĩa (ahci / scsi / megasas / ide)'
         required: true
@@ -28,6 +29,22 @@ on:
           - 'scsi'
           - 'megasas'
           - 'ide'
+      cpu_type:
+        description: 'Chọn cấu hình CPU (host / max)'
+        required: true
+        default: 'host'
+        type: choice
+        options:
+          - 'host'
+          - 'max'
+      enable_tpm:
+        description: 'Bật TPM 2.0 (y: bật, n: tắt)'
+        required: true
+        default: 'n'
+        type: choice
+        options:
+          - 'y'
+          - 'n'
 
 concurrency:
   group: win10-qemu-runner
@@ -48,7 +65,7 @@ jobs:
       - name: Install Dependencies & Setup Git LFS
         run: |
           sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils ovmf wget curl spice-vdagent libspice-server-dev git-lfs
+          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools wget curl spice-vdagent libspice-server-dev git-lfs
           git lfs install
           curl -fsSL https://tailscale.com/install.sh | sh
 
@@ -70,6 +87,9 @@ jobs:
                 ;;
               "tiny10v2" | "tinyv2" | "win10tinyv2")
                 ISO_URL="https://stranger-apparatus-mic-town.trycloudflare.com/tiny10v2.iso"
+                ;;
+              "tiny10v3" | "tinyv3" | "win10tinyv3")
+                ISO_URL="https://stranger-apparatus-mic-town.trycloudflare.com/win10tinyv3.iso"
                 ;;
               *)
                 ISO_URL="https://stranger-apparatus-mic-town.trycloudflare.com/win10lite.iso"
@@ -110,6 +130,8 @@ jobs:
       - name: Launch QEMU Windows 10
         env:
           DISK_CHOICE: ${{ github.event.inputs.disk_type }}
+          CPU_CHOICE: ${{ github.event.inputs.cpu_type }}
+          TPM_CHOICE: ${{ github.event.inputs.enable_tpm }}
         run: |
           CDROM_ARG=""
           BOOT_ARG=""
@@ -123,7 +145,7 @@ jobs:
 
           OVMF_PATH=$(ls /usr/share/OVMF/OVMF_CODE*.fd /usr/share/ovmf/OVMF*.fd 2>/dev/null | head -n 1)
 
-          # Cấu hình chuẩn đĩa theo lựa chọn
+          # 1. Cấu hình đĩa cứng
           case "$DISK_CHOICE" in
             "scsi")
               DRIVE_CTRL="-device lsi53c1030,id=scsi0"
@@ -143,16 +165,34 @@ jobs:
               ;;
           esac
 
+          # 2. Cấu hình CPU
+          if [ "$CPU_CHOICE" = "max" ]; then
+            CPU_ARG="-cpu max"
+          else
+            CPU_ARG="-cpu host,migratable=off,lm=on,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time,hv_synic,hv_stimer,hv_reset,hv_vpindex,hv_runtime,hv_tlbflush,hv_ipi,kvm=off"
+          fi
+
+          # 3. Cấu hình TPM 2.0 (y: Bật, n: Tắt)
+          TPM_ARG=""
+          if [ "$TPM_CHOICE" = "y" ]; then
+            echo "Đang khởi tạo TPM 2.0 ảo..."
+            mkdir -p /tmp/mytpm
+            swtpm socket --tpmstate dir=/tmp/mytpm --ctrl type=unixio,path=/tmp/mytpm/swtpm-sock --tpm2 &
+            sleep 2
+            TPM_ARG="-chardev socket,id=chrtpm,path=/tmp/mytpm/swtpm-sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0"
+          fi
+
           sudo qemu-system-x86_64 \
             -enable-kvm \
             -machine q35,hpet=off,accel=kvm \
-            -cpu host,migratable=off,lm=on,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time,hv_synic,hv_stimer,hv_reset,hv_vpindex,hv_runtime,hv_tlbflush,hv_ipi,kvm=off \
+            $CPU_ARG \
             -smp 4,sockets=1,cores=4,threads=1 -m 8192 \
             -vga qxl -global qxl-vga.vram_size=134217728 $BOOT_ARG \
             -drive if=pflash,format=raw,readonly=on,file=$OVMF_PATH \
             $DRIVE_CTRL \
             $DRIVE_DEV \
             $CDROM_ARG \
+            $TPM_ARG \
             -device usb-ehci,id=usb -device usb-tablet,bus=usb.0 \
             -net nic,model=e1000 -net user,hostfwd=tcp::3389-:3389 \
             -audiodev spice,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
@@ -179,6 +219,7 @@ jobs:
         if: always()
         run: |
           sudo pkill -f qemu-system-x86_64 || true
+          sudo pkill -f swtpm || true
           sleep 5
 
           # Cấu hình Git chống đứt nét HTTP 500
