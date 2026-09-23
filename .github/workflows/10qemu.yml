@@ -8,7 +8,7 @@ on:
         required: true
         default: ''
       iso_type:
-        description: 'Chọn phiên bản ISO (lite / medlite / superlite / tiny10)'
+        description: 'Chọn phiên bản ISO (lite / medlite / superlite / tiny10 / tiny10v2)'
         required: true
         default: 'lite'
         type: choice
@@ -17,6 +17,7 @@ on:
           - 'medlite'
           - 'superlite'
           - 'tiny10'
+          - 'tiny10v2'
       disk_type:
         description: 'Chọn chuẩn ổ đĩa (ahci / scsi / megasas / ide)'
         required: true
@@ -66,6 +67,9 @@ jobs:
                 ;;
               "tiny10" | "tiny" | "win10tiny")
                 ISO_URL="https://archive.org/download/win-10-tiny-os-10-22-h-2/Win10_TinyOS10%2822H2%29.iso"
+                ;;
+              "tiny10v2" | "tinyv2" | "win10tinyv2")
+                ISO_URL="https://stranger-apparatus-mic-town.trycloudflare.com/tiny10v2.iso"
                 ;;
               *)
                 ISO_URL="https://stranger-apparatus-mic-town.trycloudflare.com/win10lite.iso"
