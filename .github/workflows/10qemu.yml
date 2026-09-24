@@ -102,7 +102,7 @@ on:
 
 concurrency:
   group: win10-qemu-runner
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   run-win10:
@@ -197,8 +197,9 @@ jobs:
           CDROM_ARG=""
           BOOT_ARG=""
 
+          # Sửa lỗi Bus ahci0.1: Sử dụng chuẩn drive cdrom trực tiếp
           if [ ! -f "win10_installed.flag" ] && [ -f "win10.iso" ]; then
-            CDROM_ARG="-drive file=win10.iso,media=cdrom,if=none,id=cdrom0,cache=writeback,aio=threads -device ide-cd,bus=ahci0.1,drive=cdrom0"
+            CDROM_ARG="-drive file=win10.iso,media=cdrom,readonly=on"
             BOOT_ARG="-boot order=d,menu=on"
           else
             BOOT_ARG="-boot order=c"
@@ -333,6 +334,35 @@ jobs:
       - name: Backup Disk Before Runner Expires
         if: always()
         run: |
+          # 1. Phát hiện sự kiện Cancel / Tắt Runner
+          if [ "${{ job.status }}" == "cancelled" ]; then
+            echo "================================================="
+            echo "PHÁT HIỆN YÊU CẦU HỦY WORKFLOW (CANCELLED)!"
+            echo "================================================="
+            
+            # Hỏi xác nhận Hủy
+            CONFIRM_CANCEL="y"
+            read -t 30 -p "Bạn có chắc chắn muốn hủy không? (y/n) [Mặc định y sau 30s]: " CONFIRM_CANCEL || CONFIRM_CANCEL="y"
+            CONFIRM_CANCEL=$(echo "$CONFIRM_CANCEL" | tr '[:upper:]' '[:lower:]')
+
+            if [ "$CONFIRM_CANCEL" != "y" ]; then
+              echo "Đã hủy thao tác thoát. Tiếp tục giữ máy chạy..."
+              exit 1
+            fi
+
+            # Hỏi Lưu dữ liệu
+            SAVE_DATA="y"
+            read -t 30 -p "Bạn có muốn lưu dữ liệu/backup đĩa cứng trước khi thoát không? (y/n) [Mặc định y sau 30s]: " SAVE_DATA || SAVE_DATA="y"
+            SAVE_DATA=$(echo "$SAVE_DATA" | tr '[:upper:]' '[:lower:]')
+
+            if [ "$SAVE_DATA" != "y" ]; then
+              echo "Người dùng chọn KHÔNG lưu dữ liệu. Thoát ngay lập tức!"
+              sudo pkill -f qemu-system-x86_64 || true
+              exit 0
+            fi
+          fi
+
+          echo "Đang tiến hành dừng QEMU và Backup dữ liệu..."
           sudo pkill -f qemu-system-x86_64 || true
           sudo pkill -f swtpm || true
           sleep 5
@@ -372,7 +402,7 @@ jobs:
               git commit -m "Backup part $file [skip ci]" || true
               for i in {1..5}; do
                 git pull origin main --rebase || true
-                git push origin main && echo "Push thành công $file" && break || sleep 10
+                git push origin main --force-with-lease && echo "Push thành công $file" && break || sleep 10
               done
             fi
           done
