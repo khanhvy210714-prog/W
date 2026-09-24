@@ -197,12 +197,12 @@ jobs:
           CDROM_ARG=""
           BOOT_ARG=""
 
-          # Sửa lỗi Bus ahci0.1: Sử dụng chuẩn drive cdrom trực tiếp
+          # Tắt boot PXE IPv4/IPv6 và HTTP bằng strict boot order
           if [ ! -f "win10_installed.flag" ] && [ -f "win10.iso" ]; then
             CDROM_ARG="-drive file=win10.iso,media=cdrom,readonly=on"
-            BOOT_ARG="-boot order=d,menu=on"
+            BOOT_ARG="-boot order=dc,menu=on,strict=on"
           else
-            BOOT_ARG="-boot order=c"
+            BOOT_ARG="-boot order=c,menu=on,strict=on"
           fi
 
           OVMF_PATH=$(ls /usr/share/OVMF/OVMF_CODE*.fd /usr/share/ovmf/OVMF*.fd 2>/dev/null | head -n 1)
@@ -298,6 +298,7 @@ jobs:
             TPM_ARG="-chardev socket,id=chrtpm,path=/tmp/mytpm/swtpm-sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0"
           fi
 
+          # Tắt Boot Option PXE/HTTP bằng option -net nic,romfile=""
           sudo qemu-system-x86_64 \
             -enable-kvm \
             -machine q35,hpet=off,accel=kvm \
@@ -310,7 +311,8 @@ jobs:
             $CDROM_ARG \
             $TPM_ARG \
             -device usb-ehci,id=usb -device usb-tablet,bus=usb.0 \
-            -net nic,model=e1000 -net user,hostfwd=tcp::3389-:3389 \
+            -net nic,model=e1000,romfile="" -net user,hostfwd=tcp::3389-:3389 \
+            -global virtio-net-pci.romfile="" \
             -audiodev spice,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
             -display none \
             -spice port=5902,addr=0.0.0.0,disable-ticketing=true,image-compression=glz,jpeg-wan-compression=always,zlib-glz-wan-compression=always,streaming-video=filter,playback-compression=on &
