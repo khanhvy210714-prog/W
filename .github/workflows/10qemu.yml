@@ -115,6 +115,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Install Dependencies & Setup Git LFS
         run: |
@@ -343,6 +344,10 @@ jobs:
           git config --global http.postBuffer 524288000
           git config --global core.compression 9
 
+          # Kéo các commit mới nhất về để tránh bị từ chối Push (Fetch & Rebase)
+          git fetch origin main || true
+          git rebase origin main || true
+
           git rm -f win10_disk.tar.gz.part* || true
           rm -f win10_disk.tar.gz*
 
@@ -359,13 +364,14 @@ jobs:
 
           touch win10_installed.flag
 
-          # Commit và Push từng mảnh một để tránh lỗi 500
+          # Commit và Push đẩy dữ liệu an toàn
           git add win10_installed.flag
           for file in win10_disk.tar.gz.part*; do
             if [ -f "$file" ]; then
               git add "$file"
               git commit -m "Backup part $file [skip ci]" || true
               for i in {1..5}; do
+                git pull origin main --rebase || true
                 git push origin main && echo "Push thành công $file" && break || sleep 10
               done
             fi
