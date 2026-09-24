@@ -212,12 +212,12 @@ jobs:
               DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,aio=threads -device nvme,serial=nvme-1,drive=hda0"
               ;;
             "scsi")
-              DRIVE_CTRL="-device lsi53c1030,id=scsi0"
-              DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,aio=threads -device scsi-hd,bus=scsi0.0,drive=hda0"
+              DRIVE_CTRL="-device mptsas1068,id=scsi0"
+              DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,aio=threads -device scsi-hd,bus=scsi0.0,scsi-id=0,drive=hda0"
               ;;
             "megasas")
               DRIVE_CTRL="-device megasas,id=scsi0"
-              DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,aio=threads -device scsi-hd,bus=scsi0.0,drive=hda0"
+              DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,aio=threads -device scsi-hd,bus=scsi0.0,scsi-id=0,drive=hda0"
               ;;
             "ide")
               DRIVE_CTRL=""
