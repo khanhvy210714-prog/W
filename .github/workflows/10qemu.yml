@@ -8,7 +8,7 @@ on:
         required: true
         default: ''
       iso_type:
-        description: 'Chọn phiên bản ISO (lite / medlite / superlite / tiny10 / tiny10v2 / tiny10v3)'
+        description: 'Chọn phiên bản ISO'
         required: true
         default: 'lite'
         type: choice
@@ -19,24 +19,78 @@ on:
           - 'tiny10'
           - 'tiny10v2'
           - 'tiny10v3'
+          - 'tiny10v4'
       disk_type:
-        description: 'Chọn chuẩn ổ đĩa (ahci / scsi / megasas / ide)'
+        description: 'Chọn chuẩn ổ đĩa'
         required: true
         default: 'ahci'
         type: choice
         options:
           - 'ahci'
+          - 'nvme'
           - 'scsi'
           - 'megasas'
           - 'ide'
       cpu_type:
-        description: 'Chọn cấu hình CPU (host / max)'
+        description: 'Chọn cấu hình CPU'
         required: true
         default: 'host'
         type: choice
         options:
           - 'host'
           - 'max'
+          - 'qemu64'
+          - 'qemu32'
+          - 'kvm64'
+          - 'kvm32'
+          - 'Skylake Server'
+          - 'Skylake Client'
+          - 'Skylake tăng tốc'
+          - 'kvm64 tăng tốc'
+          - 'kvm32 tăng tốc'
+          - 'cpu Haswell'
+      cpu_clock:
+        description: 'Chọn xung nhịp GHz'
+        required: true
+        default: 'host (mặc định)'
+        type: choice
+        options:
+          - 'host (mặc định)'
+          - '0.80 GHz'
+          - '1.00 GHz'
+          - '1.40 GHz'
+          - '1.60 GHz'
+          - '1.90 GHz'
+          - '2.30 GHz'
+          - '2.40 GHz'
+          - '2.80 GHz'
+          - '3.20 GHz'
+          - '3.60 GHz'
+          - '4.00 GHz'
+          - '4.50 GHz'
+          - '6.40 GHz'
+          - '7.20 GHz'
+      cpu_cores:
+        description: 'Chọn số Core'
+        required: true
+        default: '4 core (mặc định)'
+        type: choice
+        options:
+          - '4 core (mặc định)'
+          - '2 core'
+          - '1 core'
+          - '6 core'
+          - '8 core'
+          - '12 core'
+      cpu_threads:
+        description: 'Chọn số Luồng'
+        required: true
+        default: '1 luồng (mặc định)'
+        type: choice
+        options:
+          - '1 luồng (mặc định)'
+          - '2 luồng'
+          - '4 luồng'
       enable_tpm:
         description: 'Bật TPM 2.0 (y: bật, n: tắt)'
         required: true
@@ -91,6 +145,9 @@ jobs:
               "tiny10v3" | "tinyv3" | "win10tinyv3")
                 ISO_URL="https://stranger-apparatus-mic-town.trycloudflare.com/win10tinyv3.iso"
                 ;;
+              "tiny10v4" | "tinyv4" | "win10tinyv4")
+                ISO_URL="https://stranger-apparatus-mic-town.trycloudflare.com/tiny10v4.iso"
+                ;;
               *)
                 ISO_URL="https://stranger-apparatus-mic-town.trycloudflare.com/win10lite.iso"
                 ;;
@@ -131,6 +188,9 @@ jobs:
         env:
           DISK_CHOICE: ${{ github.event.inputs.disk_type }}
           CPU_CHOICE: ${{ github.event.inputs.cpu_type }}
+          CLOCK_CHOICE: ${{ github.event.inputs.cpu_clock }}
+          CORES_CHOICE: ${{ github.event.inputs.cpu_cores }}
+          THREADS_CHOICE: ${{ github.event.inputs.cpu_threads }}
           TPM_CHOICE: ${{ github.event.inputs.enable_tpm }}
         run: |
           CDROM_ARG=""
@@ -147,6 +207,10 @@ jobs:
 
           # 1. Cấu hình đĩa cứng
           case "$DISK_CHOICE" in
+            "nvme")
+              DRIVE_CTRL=""
+              DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,aio=threads -device nvme,serial=nvme-1,drive=hda0"
+              ;;
             "scsi")
               DRIVE_CTRL="-device lsi53c1030,id=scsi0"
               DRIVE_DEV="-drive file=win10.qcow2,format=qcow2,if=none,id=hda0,discard=unmap,cache=writeback,aio=threads -device scsi-hd,bus=scsi0.0,drive=hda0"
@@ -165,14 +229,64 @@ jobs:
               ;;
           esac
 
-          # 2. Cấu hình CPU
-          if [ "$CPU_CHOICE" = "max" ]; then
-            CPU_ARG="-cpu max"
-          else
-            CPU_ARG="-cpu host,migratable=off,lm=on,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time,hv_synic,hv_stimer,hv_reset,hv_vpindex,hv_runtime,hv_tlbflush,hv_ipi,kvm=off"
-          fi
+          # 2. Xử lý Cấu hình CPU Model
+          case "$CPU_CHOICE" in
+            "max") CPU_MODEL="max" ;;
+            "qemu64") CPU_MODEL="qemu64" ;;
+            "qemu32") CPU_MODEL="qemu32" ;;
+            "kvm64") CPU_MODEL="kvm64" ;;
+            "kvm32") CPU_MODEL="kvm32" ;;
+            "Skylake Server") CPU_MODEL="Skylake-Server" ;;
+            "Skylake Client") CPU_MODEL="Skylake-Client" ;;
+            "Skylake tăng tốc") CPU_MODEL="Skylake-Client-v4" ;;
+            "kvm64 tăng tốc") CPU_MODEL="kvm64,+kvm_pv_eoi,+kvm_pv_unhalt" ;;
+            "kvm32 tăng tốc") CPU_MODEL="kvm32,+kvm_pv_eoi,+kvm_pv_unhalt" ;;
+            "cpu Haswell") CPU_MODEL="Haswell-noTSX-IBRS" ;;
+            *) CPU_MODEL="host,migratable=off,lm=on,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time,hv_synic,hv_stimer,hv_reset,hv_vpindex,hv_runtime,hv_tlbflush,hv_ipi,kvm=off" ;;
+          esac
 
-          # 3. Cấu hình TPM 2.0 (y: Bật, n: Tắt)
+          # 3. Xử lý Xung nhịp GHz (tsc-frequency)
+          FREQ_FLAG=""
+          case "$CLOCK_CHOICE" in
+            "0.80 GHz") FREQ_FLAG=",tsc-frequency=800000000" ;;
+            "1.00 GHz") FREQ_FLAG=",tsc-frequency=1000000000" ;;
+            "1.40 GHz") FREQ_FLAG=",tsc-frequency=1400000000" ;;
+            "1.60 GHz") FREQ_FLAG=",tsc-frequency=1600000000" ;;
+            "1.90 GHz") FREQ_FLAG=",tsc-frequency=1900000000" ;;
+            "2.30 GHz") FREQ_FLAG=",tsc-frequency=2300000000" ;;
+            "2.40 GHz") FREQ_FLAG=",tsc-frequency=2400000000" ;;
+            "2.80 GHz") FREQ_FLAG=",tsc-frequency=2800000000" ;;
+            "3.20 GHz") FREQ_FLAG=",tsc-frequency=3200000000" ;;
+            "3.60 GHz") FREQ_FLAG=",tsc-frequency=3600000000" ;;
+            "4.00 GHz") FREQ_FLAG=",tsc-frequency=4000000000" ;;
+            "4.50 GHz") FREQ_FLAG=",tsc-frequency=4500000000" ;;
+            "6.40 GHz") FREQ_FLAG=",tsc-frequency=6400000000" ;;
+            "7.20 GHz") FREQ_FLAG=",tsc-frequency=7200000000" ;;
+            *) FREQ_FLAG="" ;;
+          esac
+
+          CPU_ARG="-cpu ${CPU_MODEL}${FREQ_FLAG}"
+
+          # 4. Xử lý Cores & Threads
+          case "$CORES_CHOICE" in
+            "1 core") C_NUM=1 ;;
+            "2 core") C_NUM=2 ;;
+            "6 core") C_NUM=6 ;;
+            "8 core") C_NUM=8 ;;
+            "12 core") C_NUM=12 ;;
+            *) C_NUM=4 ;;
+          esac
+
+          case "$THREADS_CHOICE" in
+            "2 luồng") T_NUM=2 ;;
+            "4 luồng") T_NUM=4 ;;
+            *) T_NUM=1 ;;
+          esac
+
+          TOTAL_CPUS=$(( C_NUM * T_NUM ))
+          SMP_ARG="-smp ${TOTAL_CPUS},sockets=1,cores=${C_NUM},threads=${T_NUM}"
+
+          # 5. Cấu hình TPM 2.0
           TPM_ARG=""
           if [ "$TPM_CHOICE" = "y" ]; then
             echo "Đang khởi tạo TPM 2.0 ảo..."
@@ -186,7 +300,7 @@ jobs:
             -enable-kvm \
             -machine q35,hpet=off,accel=kvm \
             $CPU_ARG \
-            -smp 4,sockets=1,cores=4,threads=1 -m 8192 \
+            $SMP_ARG -m 8192 \
             -vga qxl -global qxl-vga.vram_size=134217728 $BOOT_ARG \
             -drive if=pflash,format=raw,readonly=on,file=$OVMF_PATH \
             $DRIVE_CTRL \
