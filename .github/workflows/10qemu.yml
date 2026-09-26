@@ -125,15 +125,24 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Install Dependencies & Setup Git LFS
+      - name: Restore or Install Dependencies & Setup Git LFS
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools wget curl spice-vdagent libspice-server-dev git-lfs novnc websockify python3-pip
-          git lfs install
-          curl -fsSL https://tailscale.com/install.sh | sh
+          if ls packinstalled.tar.gz.part* 1> /dev/null 2>&1 || [ -f "packinstalled.flag" ]; then
+            echo "Phát hiện bản nén Package cũ! Tiến hành ghép và khôi phục..."
+            cat packinstalled.tar.gz.part* > packinstalled.tar.gz
+            sudo tar -xzf packinstalled.tar.gz -C /
+            rm -f packinstalled.tar.gz
+            echo "Khôi phục Package hoàn tất, không cần cài lại!"
+          else
+            echo "Chưa có backup Package, tiến hành cài đặt mới..."
+            sudo apt-get update
+            sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools wget curl spice-vdagent libspice-server-dev novnc websockify python3-pip
+            curl -fsSL https://tailscale.com/install.sh | sh
+            sudo git clone https://gitlab.freedesktop.org/spice/spice-html5.git /usr/share/spice-html5 || true
+          fi
 
-          # Cài đặt spice-html5 để phục vụ Web NoSPICE
-          sudo git clone https://gitlab.freedesktop.org/spice/spice-html5.git /usr/share/spice-html5 || true
+          # Git LFS luôn được cài đặt riêng
+          git lfs install
 
       - name: Download Selected Windows 10 Custom ROM
         env:
@@ -208,7 +217,6 @@ jobs:
           CDROM_ARG=""
           BOOT_ARG=""
 
-          # Tắt boot PXE/HTTP bằng strict boot order
           if [ ! -f "win10_installed.flag" ] && [ -f "win10.iso" ]; then
             CDROM_ARG="-drive file=win10.iso,media=cdrom,readonly=on"
             BOOT_ARG="-boot order=dc,menu=on,strict=on"
@@ -218,7 +226,6 @@ jobs:
 
           OVMF_PATH=$(ls /usr/share/OVMF/OVMF_CODE*.fd /usr/share/ovmf/OVMF*.fd 2>/dev/null | head -n 1)
 
-          # 1. Cấu hình đĩa cứng
           case "$DISK_CHOICE" in
             "nvme")
               DRIVE_CTRL=""
@@ -242,7 +249,6 @@ jobs:
               ;;
           esac
 
-          # 2. Xử lý Cấu hình CPU Model
           case "$CPU_CHOICE" in
             "max") CPU_MODEL="max" ;;
             "qemu64") CPU_MODEL="qemu64" ;;
@@ -258,7 +264,6 @@ jobs:
             *) CPU_MODEL="host,migratable=off,lm=on,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time,hv_synic,hv_stimer,hv_reset,hv_vpindex,hv_runtime,hv_tlbflush,hv_ipi,kvm=off" ;;
           esac
 
-          # 3. Xử lý Xung nhịp GHz (tsc-frequency)
           FREQ_FLAG=""
           case "$CLOCK_CHOICE" in
             "0.80 GHz") FREQ_FLAG=",tsc-frequency=800000000" ;;
@@ -280,7 +285,6 @@ jobs:
 
           CPU_ARG="-cpu ${CPU_MODEL}${FREQ_FLAG}"
 
-          # 4. Xử lý Cores & Threads
           case "$CORES_CHOICE" in
             "1 core") C_NUM=1 ;;
             "2 core") C_NUM=2 ;;
@@ -299,7 +303,6 @@ jobs:
           TOTAL_CPUS=$(( C_NUM * T_NUM ))
           SMP_ARG="-smp ${TOTAL_CPUS},sockets=1,cores=${C_NUM},threads=${T_NUM}"
 
-          # 5. Cấu hình TPM 2.0
           TPM_ARG=""
           if [ "$TPM_CHOICE" = "y" ]; then
             echo "Đang khởi tạo TPM 2.0 ảo..."
@@ -309,7 +312,6 @@ jobs:
             TPM_ARG="-chardev socket,id=chrtpm,path=/tmp/mytpm/swtpm-sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0"
           fi
 
-          # Tắt Boot PXE/HTTP bằng romfile="" trên device e1000
           sudo qemu-system-x86_64 \
             -enable-kvm \
             -machine q35,hpet=off,accel=kvm \
@@ -362,16 +364,14 @@ jobs:
         run: |
           sleep 14400
 
-      - name: Backup Disk Before Runner Expires
+      - name: Backup Disk & Packages Before Runner Expires
         if: always()
         run: |
-          # 1. Phát hiện sự kiện Cancel / Tắt Runner
           if [ "${{ job.status }}" == "cancelled" ]; then
             echo "================================================="
             echo "PHÁT HIỆN YÊU CẦU HỦY WORKFLOW (CANCELLED)!"
             echo "================================================="
             
-            # Hỏi xác nhận Hủy
             CONFIRM_CANCEL="y"
             read -t 30 -p "Bạn có chắc chắn muốn hủy không? (y/n) [Mặc định y sau 30s]: " CONFIRM_CANCEL || CONFIRM_CANCEL="y"
             CONFIRM_CANCEL=$(echo "$CONFIRM_CANCEL" | tr '[:upper:]' '[:lower:]')
@@ -381,7 +381,6 @@ jobs:
               exit 1
             fi
 
-            # Hỏi Lưu dữ liệu
             SAVE_DATA="y"
             read -t 30 -p "Bạn có muốn lưu dữ liệu/backup đĩa cứng trước khi thoát không? (y/n) [Mặc định y sau 30s]: " SAVE_DATA || SAVE_DATA="y"
             SAVE_DATA=$(echo "$SAVE_DATA" | tr '[:upper:]' '[:lower:]')
@@ -398,17 +397,26 @@ jobs:
           sudo pkill -f swtpm || true
           sleep 5
 
-          # Cấu hình Git chống đứt nét HTTP 500
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git config --global http.version HTTP/1.1
           git config --global http.postBuffer 524288000
           git config --global core.compression 9
 
-          # Kéo các commit mới nhất về để tránh bị từ chối Push (Fetch & Rebase)
           git fetch origin main || true
           git rebase origin main || true
 
+          # 1. Backup Package nếu chưa từng có backup
+          if [ ! -f "packinstalled.flag" ]; then
+            echo "Tạo bản sao lưu Package hệ thống..."
+            sudo tar -czf packinstalled.tar.gz /usr/share/spice-html5 /usr/share/novnc /var/cache/apt/archives 2>/dev/null || true
+            split -b 40M packinstalled.tar.gz packinstalled.tar.gz.part
+            rm -f packinstalled.tar.gz
+            touch packinstalled.flag
+            git add packinstalled.flag packinstalled.tar.gz.part* || true
+          fi
+
+          # 2. Backup đĩa cứng Windows QCOW2
           git rm -f win10_disk.tar.gz.part* || true
           rm -f win10_disk.tar.gz*
 
@@ -424,16 +432,10 @@ jobs:
           fi
 
           touch win10_installed.flag
+          git add win10_installed.flag win10_disk.tar.gz.part* || true
 
-          # Commit và Push đẩy dữ liệu an toàn
-          git add win10_installed.flag
-          for file in win10_disk.tar.gz.part*; do
-            if [ -f "$file" ]; then
-              git add "$file"
-              git commit -m "Backup part $file [skip ci]" || true
-              for i in {1..5}; do
-                git pull origin main --rebase || true
-                git push origin main --force-with-lease && echo "Push thành công $file" && break || sleep 10
-              done
-            fi
+          git commit -m "Backup System & Packages [skip ci]" || true
+          for i in {1..5}; do
+            git pull origin main --rebase || true
+            git push origin main --force-with-lease && echo "Push thành công!" && break || sleep 10
           done
