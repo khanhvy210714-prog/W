@@ -45,7 +45,7 @@ on:
       vga_type:
         description: 'Chọn Card màn hình: virtio (mặc định) hoặc qxl'
         required: true
-        default: 'virtio'
+        default: 'qxl'
         type: choice
         options:
           - 'virtio'
@@ -76,15 +76,24 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Install Dependencies & Web Clients
+      - name: Restore or Install Dependencies & Web Clients
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils wget curl git-lfs spice-vdagent libspice-server-dev novnc websockify python3-pip
-          git lfs install
-          curl -fsSL https://tailscale.com/install.sh | sh
+          if ls packinstalled.tar.gz.part* 1> /dev/null 2>&1 || [ -f "packinstalled.flag" ]; then
+            echo "Phát hiện bản nén Package cũ! Tiến hành ghép và khôi phục..."
+            cat packinstalled.tar.gz.part* > packinstalled.tar.gz
+            sudo tar -xzf packinstalled.tar.gz -C /
+            rm -f packinstalled.tar.gz
+            echo "Khôi phục Package hoàn tất, không cần tải lại!"
+          else
+            echo "Chưa có backup Package, tiến hành cài đặt mới..."
+            sudo apt-get update
+            sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils wget curl spice-vdagent libspice-server-dev novnc websockify python3-pip
+            curl -fsSL https://tailscale.com/install.sh | sh
+            sudo git clone https://gitlab.freedesktop.org/spice/spice-html5.git /usr/share/spice-html5 || true
+          fi
           
-          # Cài đặt spice-html5 để phục vụ Web NoSPICE
-          sudo git clone https://gitlab.freedesktop.org/spice/spice-html5.git /usr/share/spice-html5 || true
+          # Git LFS luôn được đảm bảo cài đặt riêng
+          git lfs install
 
       - name: Setup Tailscale
         env:
@@ -175,7 +184,6 @@ jobs:
             AUDIO_ARG="-audiodev spice,id=spice-audio -device ac97,audiodev=spice-audio"
           fi
 
-          # Giữ nguyên CPU max gốc, nếu chọn kvm='y' hoặc 'd' thì pass thêm flag kvm vào CPU guest
           if [ "$KVM_OPT" = "n" ]; then
             CPU_ARG="-cpu max"
           else
@@ -257,7 +265,7 @@ jobs:
         run: |
           sleep 14400
 
-      - name: Backup Disk Before Runner Expires
+      - name: Backup Disk & Packages Before Runner Expires
         if: always()
         run: |
           echo "Đang dừng QEMU và tiến hành Backup dữ liệu..."
@@ -273,6 +281,17 @@ jobs:
           git fetch origin main || true
           git rebase origin main || true
 
+          # 1. Backup Package nếu chưa từng có backup
+          if [ ! -f "packinstalled.flag" ]; then
+            echo "Tạo bản sao lưu Package hệ thống..."
+            sudo tar -czf packinstalled.tar.gz /usr/share/spice-html5 /usr/share/novnc /var/cache/apt/archives 2>/dev/null || true
+            split -b 40M packinstalled.tar.gz packinstalled.tar.gz.part
+            rm -f packinstalled.tar.gz
+            touch packinstalled.flag
+            git add packinstalled.flag packinstalled.tar.gz.part* || true
+          fi
+
+          # 2. Backup đĩa cứng Android QCOW2
           git rm -f android_disk.tar.gz.part* || true
           rm -f android_disk.tar.gz*
 
@@ -288,15 +307,10 @@ jobs:
           fi
 
           touch androidinstalled.flag
+          git add androidinstalled.flag android_disk.tar.gz.part* || true
 
-          git add androidinstalled.flag
-          for file in android_disk.tar.gz.part*; do
-            if [ -f "$file" ]; then
-              git add "$file"
-              git commit -m "Backup part $file [skip ci]" || true
-              for i in {1..5}; do
-                git pull origin main --rebase || true
-                git push origin main --force-with-lease && echo "Push thành công $file" && break || sleep 10
-              done
-            fi
+          git commit -m "Backup System & Packages [skip ci]" || true
+          for i in {1..5}; do
+            git pull origin main --rebase || true
+            git push origin main --force-with-lease && echo "Push thành công!" && break || sleep 10
           done
