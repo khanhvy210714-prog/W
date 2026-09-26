@@ -20,6 +20,14 @@ on:
           - 'tiny10v2'
           - 'tiny10v3'
           - 'tiny10v4'
+      use_nospice_web:
+        description: 'Dùng NoSPICE Web Client (Mở thẳng bằng Web Browser)?'
+        required: true
+        default: 'y'
+        type: choice
+        options:
+          - 'y'
+          - 'n'
       disk_type:
         description: 'Chọn chuẩn ổ đĩa'
         required: true
@@ -120,9 +128,12 @@ jobs:
       - name: Install Dependencies & Setup Git LFS
         run: |
           sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools wget curl spice-vdagent libspice-server-dev git-lfs
+          sudo apt-get install -y xfce4 xfce4-goodies x11vnc xvfb qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools wget curl spice-vdagent libspice-server-dev git-lfs novnc websockify python3-pip
           git lfs install
           curl -fsSL https://tailscale.com/install.sh | sh
+
+          # Cài đặt spice-html5 để phục vụ Web NoSPICE
+          sudo git clone https://gitlab.freedesktop.org/spice/spice-html5.git /usr/share/spice-html5 || true
 
       - name: Download Selected Windows 10 Custom ROM
         env:
@@ -318,14 +329,32 @@ jobs:
             -spice port=5902,addr=0.0.0.0,disable-ticketing=true,image-compression=glz,jpeg-wan-compression=always,zlib-glz-wan-compression=always,streaming-video=filter,playback-compression=on &
           sleep 3
 
+      - name: Setup Web NoSPICE Bridge
+        env:
+          USE_WEB: ${{ github.event.inputs.use_nospice_web }}
+        run: |
+          if [ "$USE_WEB" = "y" ]; then
+            echo "Khởi chạy Web NoSPICE Bridge trên Cổng 6080..."
+            websockify --web /usr/share/spice-html5/ 6080 localhost:5902 > /dev/null 2>&1 &
+            sleep 2
+          fi
+
       - name: Show Connection Info
+        env:
+          USE_WEB: ${{ github.event.inputs.use_nospice_web }}
         run: |
           sleep 5
           tailscale_ip=$(tailscale ip -4 || echo "Chưa kết nối Tailscale")
           echo "=========================================="
           echo "IP TAILSCALE UBUNTU HOST: $tailscale_ip"
           echo "1. VNC UBUNTU DESKTOP: $tailscale_ip:5900"
-          echo "2. SPICE QEMU WIN 10:  $tailscale_ip:5902"
+          
+          if [ "$USE_WEB" = "y" ]; then
+            echo "2. LINK NOSPICE WEB DIRECT: http://$tailscale_ip:6080/spice_auto.html?host=$tailscale_ip&port=6080"
+          else
+            echo "2. SPICE QEMU WIN 10 (App):  $tailscale_ip:5902"
+          fi
+
           echo "3. RDP WINDOWS 10:     $tailscale_ip:3389"
           echo "=========================================="
 
